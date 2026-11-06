@@ -1,0 +1,6 @@
+# runtime state written by the collector (never commit)
+benno_status.json
+benno_archive_total.json
+.benno-zabbix.lock
+.DS_Store
+*.swp

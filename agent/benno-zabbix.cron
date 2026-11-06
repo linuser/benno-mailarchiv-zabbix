@@ -1,0 +1,5 @@
+# Benno MailArchiv: collect monitoring signals for Zabbix (root reads journal/repo).
+# Install as /etc/cron.d/benno-zabbix.
+# Do NOT swallow errors -> route them to the journal (tag benno-zabbix) so a
+# broken script becomes visible; stdout (normally empty) is discarded.
+*/5 * * * * root /usr/local/bin/benno-zabbix-status.sh 2>&1 >/dev/null | logger -t benno-zabbix
