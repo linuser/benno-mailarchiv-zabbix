@@ -1,0 +1,1897 @@
+zabbix_export:
+  version: '7.4'
+  template_groups:
+    - uuid: a571c0d144b14fd4a87a9d9b2aa9fcd6
+      name: Templates/Applications
+  templates:
+    - uuid: 7ef99c3035bd4e77bc1fe5e51aa9b4dd
+      template: Benno MailArchiv by Zabbix agent
+      name: 'Benno MailArchiv by Zabbix agent'
+      vendor:
+        name: Alexander Fox | PlaNet Fox
+        version: '1.0'
+      description: |
+        Monitors Benno MailArchive appliance:
+        - IMAP import process and pickup freshness
+        - Archive size and mail count (cached)
+        - Inbox queue depth (pending mails)
+        - Web UI availability and content check
+        - Disk space and inode usage
+        - Import log error scanning
+        
+        Requires UserParameters: benno.status[], benno.archive_total[]
+      groups:
+        - name: Templates/Applications
+      items:
+        - uuid: 80c57a54ddbb43aa8e160391f5bc0b81
+          name: 'Archive: growth rate (GiB/interval)'
+          type: CALCULATED
+          key: benno.archive.growth_bytes
+          delay: 1h
+          history: 365d
+          value_type: FLOAT
+          trends: 730d
+          units: GiB
+          params: change(//benno.archive.total_bytes)
+          description: 'Change in archive size since last check, in gibibytes (GiB).'
+          tags:
+            - tag: component
+              value: benno-archive
+        - uuid: b38eb6266c784e89804825535bdf434c
+          name: 'Archive: growth rate (mails/interval)'
+          type: CALCULATED
+          key: benno.archive.growth_files
+          delay: 1h
+          history: 365d
+          value_type: FLOAT
+          trends: 730d
+          params: change(//benno.archive.total_files)
+          description: 'Change in total mail count since last check. Shows import throughput.'
+          tags:
+            - tag: component
+              value: benno-archive
+        - uuid: 9925a5b61fed40259dc2e6e2a361a3d4
+          name: 'Archive: total size (GiB)'
+          type: DEPENDENT
+          key: benno.archive.total_bytes
+          history: 365d
+          value_type: FLOAT
+          trends: 730d
+          units: GiB
+          description: 'Total size of the mail archive in gibibytes (GiB).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.archive_total_bytes
+            - type: MULTIPLIER
+              parameters:
+                - '9.3132257461548E-10'
+          master_item:
+            key: 'benno.archive_total'
+          tags:
+            - tag: component
+              value: benno-archive
+        - uuid: 836fc1e585fc413799e06a662b2dc040
+          name: 'Archive: total mails/files (approx)'
+          type: DEPENDENT
+          key: benno.archive.total_files
+          history: 365d
+          trends: 730d
+          description: 'Approximate total number of archived mail files.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.archive_total_files
+          master_item:
+            key: 'benno.archive_total'
+          tags:
+            - tag: component
+              value: benno-archive
+        - uuid: 918458ef9d3d4696bf30e9cb5eadf15c
+          name: 'Benno archive totals JSON (cached)'
+          key: 'benno.archive_total'
+          delay: 30m
+          history: 7d
+          value_type: TEXT
+          description: 'Raw JSON from UserParameter benno.archive_total[]. Uses a cache file to avoid expensive recounts.'
+          tags:
+            - tag: component
+              value: benno-archive
+        - uuid: 23ffc53d332b44ec9cbff853a871c890
+          name: 'Archive: totals measured at (unix)'
+          type: DEPENDENT
+          key: benno.archive.ts
+          history: 30d
+          units: unixtime
+          description: 'Unix time the archive size/count was last measured. Used to alert when the periodic archive scan stalls (its totals stop refreshing).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ts
+          master_item:
+            key: benno.archive_total
+          tags:
+            - tag: component
+              value: benno-archive
+          triggers:
+            - uuid: b7e37371df31487e88c600cc6b9ee56f
+              expression: 'fuzzytime(/Benno MailArchiv by Zabbix agent/benno.archive.ts,{$BENNO_ARCHIVE_TS_MAX})=0'
+              name: 'Benno: archive totals are stale (scan stalled)'
+              priority: WARNING
+              description: 'The archive size/count has not been refreshed within {$BENNO_ARCHIVE_TS_MAX}. The periodic archive scan may be stuck or failing, so archive size and growth are no longer trustworthy.'
+              tags:
+                - tag: component
+                  value: benno-archive
+                - tag: scope
+                  value: capacity
+        - uuid: 8871593f7fa3403d8aa28c04aa0a8923
+          name: 'IMAP pickup: last success age (minutes)'
+          type: DEPENDENT
+          key: benno.imap.last_ok_age
+          history: 90d
+          value_type: FLOAT
+          units: min
+          description: 'Minutes since the last successful IMAP import run. Values above {$BENNO_LAST_OK_MAX} trigger an alert.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.last_ok_age
+            - type: MULTIPLIER
+              parameters:
+                - '0.016666666666667'
+          master_item:
+            key: 'benno.status'
+          tags:
+            - tag: component
+              value: benno-imap
+          triggers:
+            - uuid: 4377c5c65203435cb35da48c96b522a6
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.imap.last_ok_age)>{$BENNO_LAST_OK_MAX} and last(/Benno MailArchiv by Zabbix agent/benno.imap.last_ok_age)<>0'
+              name: 'Benno: no successful IMAP pickup for >{$BENNO_LAST_OK_MAX} min'
+              priority: HIGH
+              description: 'The IMAP importer has not reported a successful run for more than {$BENNO_LAST_OK_MAX} minutes.'
+              tags:
+                - tag: component
+                  value: benno-imap
+                - tag: scope
+                  value: availability
+        - uuid: b966c96a9c9946bab1c3684f4cae90d5
+          name: 'IMAP pickup: last success time (unix)'
+          type: DEPENDENT
+          key: benno.imap.last_ok_epoch
+          history: 90d
+          units: unixtime
+          description: 'Unix epoch of the last successful IMAP import. Displayed as human-readable timestamp.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.last_ok_epoch
+          master_item:
+            key: 'benno.status'
+          tags:
+            - tag: component
+              value: benno-imap
+        - uuid: f525dccf164c44a4aa9265b61096bd47
+          name: 'Benno IMAP pickup status JSON'
+          key: 'benno.status'
+          delay: 60s
+          history: 7d
+          value_type: TEXT
+          description: 'Raw JSON from UserParameter benno.status[] containing last_ok_age, last_ok_epoch, etc.'
+          tags:
+            - tag: component
+              value: benno-imap
+          triggers:
+            - uuid: 7aa1c71e9b0e4b7a9b17c9b039576f55
+              expression: 'length(last(/Benno MailArchiv by Zabbix agent/benno.status))=0 or nodata(/Benno MailArchiv by Zabbix agent/benno.status,20m)=1'
+              name: 'Benno: status collector stale or dead (no fresh data)'
+              priority: HIGH
+              description: |
+                The benno.status collector delivered no fresh data. Either the
+                root cron/collector script stopped (the agent then returns an
+                empty value because benno.conf only cats the JSON when it is
+                younger than 15 min) or the agent/host is unreachable. While
+                this fires, the IMAP-pickup freshness alert is blind, so treat
+                it as a monitoring outage, not just a benno issue.
+              tags:
+                - tag: component
+                  value: benno-imap
+                - tag: scope
+                  value: availability
+        - uuid: b1a16609227b4216bfd37a9a32bdf24a
+          name: 'Collector: journal readable (0/1)'
+          type: DEPENDENT
+          key: benno.journal_ok
+          history: 30d
+          description: 'Whether the collector could read the systemd journal on the last run (0 = unreadable; pickup age is then UNKNOWN, not healthy).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.journal_ok
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-imap
+          triggers:
+            - uuid: 2eafc410971d4f5981da6d58c3a8d89d
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.journal_ok)=0'
+              name: 'Benno: collector cannot read the journal (pickup state unknown)'
+              priority: HIGH
+              description: 'The collector could not read the systemd journal, so IMAP pickup freshness is UNKNOWN rather than healthy. Fix journal access on the Benno host.'
+              tags:
+                - tag: component
+                  value: benno-imap
+                - tag: scope
+                  value: availability
+        - uuid: cb99d82f394740d4a940fc393ab44c70
+          name: 'Collector: measurement OK (0/1)'
+          type: DEPENDENT
+          key: benno.collector_ok
+          history: 30d
+          description: 'Whether the collector could measure its filesystem inputs on the last run (0 = e.g. the inbox directory was missing/unreadable).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.collector_ok
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-imap
+          triggers:
+            - uuid: 7464965f3c1a4ed0b2aeca6a44213d75
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.collector_ok)=0'
+              name: 'Benno: collector could not measure its inputs'
+              priority: HIGH
+              description: 'The collector reported a measurement failure (for example a missing inbox or archive path). Published values may be stale or unknown rather than real zeros.'
+              tags:
+                - tag: component
+                  value: benno-imap
+                - tag: scope
+                  value: availability
+        - uuid: 46039a4dd69b4c73a74b0849c5bbb117
+          name: 'Benno: Web reachable (BODY)'
+          type: HTTP_AGENT
+          key: benno.web.body
+          delay: 5m
+          history: 7d
+          value_type: TEXT
+          description: 'Fetches the Benno web UI body to verify the application is responding.'
+          timeout: '{$BENNO_WEB_TIMEOUT}'
+          url: '{$BENNO_WEB_URL}'
+          status_codes: '200,301,302'
+          verify_peer: 'YES'
+          verify_host: 'YES'
+          tags:
+            - tag: component
+              value: benno-web
+          triggers:
+            - uuid: 89b883dc22b645ef89b68b11cfaaaaba
+              expression: 'nodata(/Benno MailArchiv by Zabbix agent/benno.web.body,15m)=1'
+              name: 'Benno: web UI unreachable (no data)'
+              priority: HIGH
+              description: |
+                The web check returned no data for 15 minutes. On HTTP 500, a
+                timeout, a refused connection or a DNS failure the HTTP item goes
+                unsupported, so the content-match trigger alone would keep its
+                last value; this nodata trigger catches those outages.
+              tags:
+                - tag: component
+                  value: benno-web
+                - tag: scope
+                  value: availability
+        - uuid: 36a1ae5f4b444cf6af184c0289bb5a97
+          name: 'Benno: Web content OK (0/1)'
+          type: DEPENDENT
+          key: benno.web.content_ok
+          history: 90d
+          description: 'Returns 1 if the web body matches the expected regex, 0 otherwise.'
+          valuemap:
+            name: 'Benno Web Content Check'
+          preprocessing:
+            - type: REGEX
+              parameters:
+                - '{$BENNO_WEB_REGEX}'
+                - '1'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          master_item:
+            key: benno.web.body
+          tags:
+            - tag: component
+              value: benno-web
+          triggers:
+            - uuid: 2e80c766805a438d9906188d80dc6207
+              expression: last(/Benno MailArchiv by Zabbix agent/benno.web.content_ok)=0
+              name: 'Benno: Web UI content check failed'
+              priority: HIGH
+              description: 'The web UI body does not match the expected regex. The application may be down or misconfigured.'
+              tags:
+                - tag: component
+                  value: benno-web
+                - tag: scope
+                  value: availability
+        - uuid: 069266e5d50944e3b98e252973efbf55
+          name: 'Benno: POP3 source reachable'
+          key: 'net.tcp.service[tcp,{$BENNO_POP3_HOST},{$BENNO_POP3_PORT}]'
+          delay: 2m
+          history: 30d
+          value_type: UNSIGNED
+          description: |
+            TCP reachability from the Benno host to its POP3/IMAP source
+            ({$BENNO_POP3_HOST}:{$BENNO_POP3_PORT}); 1 = reachable, 0 = blocked.
+            An early signal that mail pickup will stall (an egress-firewall block
+            or a ban on the mail server shows here before the "no IMAP pickup for
+            >60 min" alert). Reachability only, no credentials sent. Set
+            {$BENNO_POP3_HOST} per host.
+          tags:
+            - tag: component
+              value: benno-imap
+            - tag: scope
+              value: availability
+          triggers:
+            - uuid: 9daf16f05cb14a43a93bcb39f455e8e6
+              expression: 'max(/Benno MailArchiv by Zabbix agent/net.tcp.service[tcp,{$BENNO_POP3_HOST},{$BENNO_POP3_PORT}],10m)=0 and "{$BENNO_POP3_HOST}"<>"mail.example.com"'
+              name: 'Benno: POP3 source unreachable (mail pickup will stall)'
+              priority: HIGH
+              description: |
+                The Benno host could not open TCP {$BENNO_POP3_PORT} to
+                {$BENNO_POP3_HOST} for 10 minutes; POP3 mail pickup will stall.
+                Check the egress firewall and the mail server's ban/rate-limit
+                decisions for the Benno IP.
+              tags:
+                - tag: component
+                  value: benno-imap
+                - tag: scope
+                  value: availability
+        - uuid: c9bfa7727b1b435bbebadbed2412b721
+          name: 'Benno daemon: archiving (benno-archive)'
+          key: 'systemd.unit.info[benno-archive.service,ActiveState]'
+          delay: 2m
+          history: 7d
+          value_type: CHAR
+          description: 'systemd ActiveState of the Benno archiving daemon. Not "active" means archiving stopped even if POP3 fetch keeps filling the inbox.'
+          tags:
+            - tag: component
+              value: benno-archive
+          triggers:
+            - uuid: 87d09f3c4e4844ebaa77fce40c355e63
+              expression: 'last(/Benno MailArchiv by Zabbix agent/systemd.unit.info[benno-archive.service,ActiveState])<>"active"'
+              name: 'Benno: archiving daemon not active (benno-archive)'
+              priority: HIGH
+              description: 'benno-archive.service is not "active". New mail is fetched but not written to the archive; the inbox will back up.'
+              tags:
+                - tag: component
+                  value: benno-archive
+                - tag: scope
+                  value: availability
+        - uuid: aa60cb7287184dd79fa28ac6afc07861
+          name: 'Benno daemon: REST import (benno-import-rest)'
+          key: 'systemd.unit.info[benno-import-rest.service,ActiveState]'
+          delay: 2m
+          history: 7d
+          value_type: CHAR
+          description: 'systemd ActiveState of the Benno REST import daemon (:21543), an OPTIONAL component — not every install has it. Its trigger only alerts on a failed (crashed) state, so a service that is absent or deliberately stopped is not flagged.'
+          tags:
+            - tag: component
+              value: benno-imap
+          triggers:
+            - uuid: 384d2a8fe0224cb4a8d208378ffc18db
+              expression: 'last(/Benno MailArchiv by Zabbix agent/systemd.unit.info[benno-import-rest.service,ActiveState])="failed"'
+              name: 'Benno: REST import daemon failed (benno-import-rest)'
+              priority: HIGH
+              description: 'benno-import-rest.service is in a failed state. This daemon is optional, so the trigger matches only "failed" (a crash) and stays silent when the service is simply not installed or deliberately stopped.'
+              tags:
+                - tag: component
+                  value: benno-imap
+                - tag: scope
+                  value: availability
+        - uuid: 3c41f1f0c1f74f0e92c3a484e9c3bb8b
+          name: 'Benno daemon: REST service (benno-rest)'
+          key: 'systemd.unit.info[benno-rest.service,ActiveState]'
+          delay: 2m
+          history: 7d
+          value_type: CHAR
+          description: 'systemd ActiveState of the Benno REST service daemon. Not "active" means the REST/API service is down.'
+          tags:
+            - tag: component
+              value: benno-web
+          triggers:
+            - uuid: d30d1384cca84d388b0d4a1dba6292be
+              expression: 'last(/Benno MailArchiv by Zabbix agent/systemd.unit.info[benno-rest.service,ActiveState])<>"active"'
+              name: 'Benno: REST service daemon not active (benno-rest)'
+              priority: HIGH
+              description: 'benno-rest.service is not "active". The Benno REST/API service is down.'
+              tags:
+                - tag: component
+                  value: benno-web
+                - tag: scope
+                  value: availability
+        - uuid: 55dfdb1d53c14678b5f5b213fa82e638
+          name: 'Benno: web cert days until expiry'
+          type: DEPENDENT
+          key: benno.web.cert_days
+          value_type: FLOAT
+          history: 30d
+          description: 'Days until the Benno web TLS certificate expires, measured locally by the collector. -1 = the cert could not be read. certbot should renew well before this reaches 0.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.web_cert_days
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-web
+          triggers:
+            - uuid: 029c21580dd8456ab3fab2c66ee8fb6f
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.web.cert_days)>=0 and last(/Benno MailArchiv by Zabbix agent/benno.web.cert_days)<{$BENNO_CERT_WARN_DAYS}'
+              name: 'Benno: web TLS certificate expiring soon'
+              priority: HIGH
+              description: 'The Benno web certificate expires in fewer than {$BENNO_CERT_WARN_DAYS} days. Automatic renewal (certbot) has likely failed; check the renewal timer.'
+              tags:
+                - tag: component
+                  value: benno-web
+                - tag: scope
+                  value: availability
+        - uuid: 14688cfd07ca485bb0eca0c22fbcf429
+          name: 'Benno: license days until expiry'
+          type: DEPENDENT
+          key: benno.license_days
+          value_type: FLOAT
+          history: 30d
+          description: 'Days until the Benno MailArchiv license expires, from the collector — which reads only the Expires: date in the license file, never the key, licensee or mail domain. -1 = no license file / no expiry (community or perpetual install). An expired license can halt archiving.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.license_days
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-host
+          triggers:
+            - uuid: fe7a942c3d2f42969209ae37808822fe
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.license_days)>=0 and last(/Benno MailArchiv by Zabbix agent/benno.license_days)<{$BENNO_LICENSE_WARN_DAYS}'
+              name: 'Benno: license expiring soon'
+              priority: HIGH
+              description: 'The Benno MailArchiv license expires in fewer than {$BENNO_LICENSE_WARN_DAYS} days. Renew it before it lapses — an expired license can stop the archive from accepting mail.'
+              tags:
+                - tag: component
+                  value: benno-host
+                - tag: scope
+                  value: availability
+        - uuid: 391f2a01478a436587569dd3d7df9156
+          name: 'Benno: backup age (s)'
+          type: DEPENDENT
+          key: benno.backup_age
+          value_type: FLOAT
+          units: s
+          history: 30d
+          description: 'Seconds since the last successful backup, from the collector reading the mtime of the file named in BENNO_BACKUP_STAMP (your backup job touches it on success — any tool: PBS, Borg, restic, rsync, tar). -1 = no stamp configured / not found, so the check stays silent until a backup is wired in.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.backup_age
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-host
+          triggers:
+            - uuid: 64cda216f3f2494cb0ebe363e5fffb95
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.backup_age)>{$BENNO_BACKUP_MAX_AGE}'
+              name: 'Benno: backup is stale'
+              priority: WARNING
+              description: 'No successful backup touched BENNO_BACKUP_STAMP within {$BENNO_BACKUP_MAX_AGE} seconds — a mail archive is only as safe as its last backup. -1 means no stamp is configured, and the trigger never fires.'
+              tags:
+                - tag: component
+                  value: benno-host
+                - tag: scope
+                  value: availability
+        - uuid: f96e099ad00e416b9f4e541d052120fe
+          name: 'Benno: clock NTP-synchronised (0/1)'
+          type: DEPENDENT
+          key: benno.ntp_synced
+          value_type: UNSIGNED
+          history: 30d
+          description: 'Whether the Benno system clock is disciplined by NTP (1) or not (0). Correct time matters for a revision-safe archive. A restrictive egress firewall must allow outbound UDP 123.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.ntp_synced
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-host
+          triggers:
+            - uuid: 224ec5a7fae843b5a1bae86e4abbef78
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.ntp_synced)=0'
+              name: 'Benno: system clock not NTP-synchronised'
+              priority: WARNING
+              description: 'The Benno clock is not synchronised by NTP; timestamps on a revision-safe archive may drift. Allow outbound UDP 123 in the egress firewall so systemd-timesyncd can reach its servers.'
+              tags:
+                - tag: component
+                  value: benno-host
+                - tag: scope
+                  value: security
+        - uuid: e5ca7b7e60784a40ba65dff334977df0
+          name: 'Benno: IMAP import last run (1 ok / 0 error)'
+          type: DEPENDENT
+          key: benno.imapimport.last
+          value_type: FLOAT
+          history: 30d
+          description: 'Outcome of the last benno-imapimport wrapper run (IMAP/Kerio import; the benno-import.sh pattern that appends [OK]/[ERROR]/[SKIP] to a log). 1 = OK, 0 = ERROR, 2 = SKIP (lock held), -1 = no wrapper log / not in use. Only the markers are read, no mail content.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.imapimport_last
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-imap
+          triggers:
+            - uuid: 67cbabfb86934f848d73334c69a9c6d2
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.imapimport.last)=0'
+              name: 'Benno: IMAP import last run failed'
+              priority: WARNING
+              description: 'The most recent benno-imapimport (IMAP/Kerio) run ended with [ERROR]. New mail from that source is not being archived until a run succeeds. Clears on the next [OK] run. Raise to HIGH if you want this to page.'
+              tags:
+                - tag: component
+                  value: benno-imap
+                - tag: scope
+                  value: availability
+        - uuid: dbb64464d2e74bafbed2c59cd3c11604
+          name: 'Benno: IMAP import last run age (s)'
+          type: DEPENDENT
+          key: benno.imapimport.age
+          value_type: FLOAT
+          history: 30d
+          units: s
+          description: 'Seconds since the benno-imapimport wrapper log was last written (i.e. since the IMAP/Kerio import last ran). -1 = no wrapper log / not in use, so this never alerts on installs that do not run the wrapper.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.imapimport_age
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-imap
+          triggers:
+            - uuid: 84802f0cfc89477f88c71a6ea0cc8271
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.imapimport.age)>{$BENNO_IMAPIMPORT_MAXAGE}'
+              name: 'Benno: IMAP import stalled (no run recently)'
+              priority: HIGH
+              description: 'The benno-imapimport (IMAP/Kerio) wrapper has not run for more than {$BENNO_IMAPIMPORT_MAXAGE} seconds — its cron or the wrapper has stopped, so mail from that source is no longer being fetched. (-1 = not in use, never fires.)'
+              tags:
+                - tag: component
+                  value: benno-imap
+                - tag: scope
+                  value: availability
+        - uuid: a3239af20a4f418388177bf037214f7a
+          name: 'Benno: Postfix mail queue depth'
+          type: DEPENDENT
+          key: benno.postfix_queue
+          value_type: FLOAT
+          history: 30d
+          description: 'Messages in the Postfix queue (system/bounce mail; -1 = postfix tools absent). Benno intake is POP3, so this covers local/system mail health.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.postfix_queue
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-host
+          triggers:
+            - uuid: 16b4fadc20b94a61848345c406b96534
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.postfix_queue)>{$BENNO_POSTFIX_QUEUE_WARN}'
+              name: 'Benno: Postfix mail queue is backing up'
+              priority: WARNING
+              description: 'The Postfix queue exceeds {$BENNO_POSTFIX_QUEUE_WARN} messages; system or bounce mail may be stuck.'
+              tags:
+                - tag: component
+                  value: benno-host
+                - tag: scope
+                  value: performance
+        - uuid: faa8f2f6f4ad4f8b9c5331b44c08264a
+          name: 'Benno: systemd failed units'
+          type: DEPENDENT
+          key: benno.systemd_failed
+          value_type: UNSIGNED
+          history: 30d
+          description: 'Number of systemd units in "failed" state, from the collector. A catch-all: a latent failure such as a failed networking.service surfaces here before anything downstream breaks. Run "systemctl --failed" on the host to see which.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.systemd_failed
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-host
+          triggers:
+            - uuid: e3a9bfaac19d410ca6c1f0119924180c
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.systemd_failed)>{$BENNO_SYSTEMD_FAILED_WARN}'
+              name: 'Benno: systemd has failed units'
+              priority: HIGH
+              description: 'One or more systemd units are in "failed" state. Run "systemctl --failed" on the host. A catch-all that surfaces latent failures (e.g. a failed networking.service) before they break something downstream.'
+              tags:
+                - tag: component
+                  value: benno-host
+                - tag: scope
+                  value: availability
+        - uuid: 156c2e77c5f54484a759115be4563793
+          name: 'Benno inbox: stuck .err files (aged)'
+          type: DEPENDENT
+          key: benno.inbox.err_aged
+          value_type: FLOAT
+          history: 30d
+          description: 'Number of .err files in the inbox older than the collector''s stuck-age window (default 2h) — mail the archiver failed to ingest. Separate from normal in-flight .eml throughput. -1 = inbox dir missing.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.inbox_err_aged
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-archive
+          triggers:
+            - uuid: d3ac128644574c60a98567f045b202d5
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.inbox.err_aged)>{$BENNO_INBOX_STUCK_WARN}'
+              name: 'Benno: stuck .err files in the inbox'
+              priority: WARNING
+              description: 'The inbox holds .err files (failed archiving) older than the stuck-age window. These mails are not in the archive; inspect /srv/benno/inbox and the archiver log.'
+              tags:
+                - tag: component
+                  value: benno-archive
+                - tag: scope
+                  value: availability
+        - uuid: 63209566a7644221b2f050b5c87844be
+          name: 'Benno inbox: stuck .prc files (aged)'
+          type: DEPENDENT
+          key: benno.inbox.prc_aged
+          value_type: FLOAT
+          history: 30d
+          description: 'Number of .prc files in the inbox older than the collector''s stuck-age window (default 2h) — mail stuck mid-processing (not picked up or hung). -1 = inbox dir missing.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.inbox_prc_aged
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-archive
+          triggers:
+            - uuid: 059a706811a54932a1a6078c55d15971
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.inbox.prc_aged)>{$BENNO_INBOX_STUCK_WARN}'
+              name: 'Benno: stuck .prc files in the inbox'
+              priority: WARNING
+              description: 'The inbox holds .prc files (processing) older than the stuck-age window — mail hung in processing or not matched by the directory watcher. Inspect /srv/benno/inbox.'
+              tags:
+                - tag: component
+                  value: benno-archive
+                - tag: scope
+                  value: availability
+        - uuid: 346622227b914a12a1ff8ec8be2f485f
+          name: 'Benno import log: errors in last 20m'
+          type: DEPENDENT
+          key: benno.import.err_20m
+          value_type: FLOAT
+          history: 30d
+          description: |
+            Count of ERROR/FATAL/SEVERE lines in the Benno import log within the
+            last 20 minutes, taken from the collector JSON. The root collector
+            reads the log (0640 benno:benno, which the agent user cannot read)
+            and publishes only the count, so no log content (customer mail
+            metadata) ever reaches Zabbix. -1 = the collector could not read the
+            import log (wrong path / missing file) -> the check is broken, which
+            is not the same as "zero errors".
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.import_err_20m
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-imap
+          triggers:
+            - uuid: 624d6adfef334738a18af261992ccbd4
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.import.err_20m)>{$BENNO_IMPORT_ERR_WARN}'
+              name: 'Benno: import log reports errors (last 20m)'
+              priority: WARNING
+              description: 'The Benno import log recorded ERROR/FATAL/SEVERE lines within the last 20 minutes (count above {$BENNO_IMPORT_ERR_WARN}).'
+              tags:
+                - tag: component
+                  value: benno-imap
+                - tag: scope
+                  value: performance
+            - uuid: 7d2c1e4a9f8b4c3da1e6b05f2c7a9e11
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.import.err_20m)<0'
+              name: 'Benno: import-log error check not collecting'
+              priority: WARNING
+              description: 'The collector returned -1 for the import-log scan, i.e. it could not read the import log (wrong path, missing file or permissions). The errors-in-20m value is not a real zero; fix the import log path/readability on the Benno host.'
+              tags:
+                - tag: component
+                  value: benno-imap
+                - tag: scope
+                  value: availability
+        - uuid: 2b9f6a1c8e5d4f7b9a0c3e6d1f4a8b52
+          name: 'Benno import log: last error time (unix)'
+          type: DEPENDENT
+          key: benno.import.err_last
+          history: 90d
+          units: unixtime
+          description: 'Unix epoch of the most recent ERROR/FATAL/SEVERE line in the Benno import log (0 = none seen). From the collector JSON.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.import_err_last_epoch
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-imap
+        - uuid: 31043923d3324906ac691dee0e36bde3
+          name: 'Benno inbox: queue depth (files)'
+          type: DEPENDENT
+          key: benno.inbox_queue
+          value_type: FLOAT
+          history: 90d
+          description: 'Files waiting in the Benno inbox (regular files, depth 1), taken from the collector JSON so the agent user needs no inbox read access. -1 = inbox directory not readable.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - $.inbox_queue
+          master_item:
+            key: benno.status
+          tags:
+            - tag: component
+              value: benno-imap
+          triggers:
+            - uuid: 2fd1f41274dd4a0a8a1ad826037646ff
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.inbox_queue)>{$BENNO_INBOX_QUEUE_CRIT}'
+              name: 'Benno: inbox queue is critical (>{$BENNO_INBOX_QUEUE_CRIT} files)'
+              priority: DISASTER
+              description: 'The inbox has more than {$BENNO_INBOX_QUEUE_CRIT} files. Import is severely behind.'
+              tags:
+                - tag: component
+                  value: benno-imap
+                - tag: scope
+                  value: performance
+            - uuid: ed1ddb78051f404f903d8ca0e86bda82
+              expression: 'last(/Benno MailArchiv by Zabbix agent/benno.inbox_queue)>{$BENNO_INBOX_QUEUE_WARN}'
+              name: 'Benno: inbox queue is growing (>{$BENNO_INBOX_QUEUE_WARN} files)'
+              priority: WARNING
+              description: 'The inbox pickup directory contains more than {$BENNO_INBOX_QUEUE_WARN} files. Import may be lagging.'
+              dependencies:
+                - name: 'Benno: inbox queue is critical (>{$BENNO_INBOX_QUEUE_CRIT} files)'
+                  expression: 'last(/Benno MailArchiv by Zabbix agent/benno.inbox_queue)>{$BENNO_INBOX_QUEUE_CRIT}'
+              tags:
+                - tag: component
+                  value: benno-imap
+                - tag: scope
+                  value: performance
+        - uuid: 1821617a2e0141fb979267e1e8e32296
+          name: 'Inodes: free percent (mountpoint)'
+          key: 'vfs.fs.inode[{$BENNO_MOUNTPOINT},pfree]'
+          delay: 5m
+          history: 90d
+          value_type: FLOAT
+          units: '%'
+          description: 'Percentage of free inodes on {$BENNO_MOUNTPOINT}.'
+          tags:
+            - tag: component
+              value: storage
+          triggers:
+            - uuid: cc9d4a0ec47f406d96adb2ba00e276e9
+              expression: 'last(/Benno MailArchiv by Zabbix agent/vfs.fs.inode[{$BENNO_MOUNTPOINT},pfree])<{$BENNO_INODE_PFREE_CRIT}'
+              name: 'Benno: inode free is critical (<{$BENNO_INODE_PFREE_CRIT}%)'
+              priority: DISASTER
+              description: 'Inode usage on {$BENNO_MOUNTPOINT} is below {$BENNO_INODE_PFREE_CRIT}%. Immediate action required.'
+              tags:
+                - tag: component
+                  value: storage
+                - tag: scope
+                  value: capacity
+            - uuid: 4ef2ee58507d41a08aff94d32dd00735
+              expression: 'last(/Benno MailArchiv by Zabbix agent/vfs.fs.inode[{$BENNO_MOUNTPOINT},pfree])<{$BENNO_INODE_PFREE_WARN}'
+              name: 'Benno: inode free is low (<{$BENNO_INODE_PFREE_WARN}%)'
+              priority: WARNING
+              description: 'Inode usage on {$BENNO_MOUNTPOINT} is below {$BENNO_INODE_PFREE_WARN}%.'
+              dependencies:
+                - name: 'Benno: inode free is critical (<{$BENNO_INODE_PFREE_CRIT}%)'
+                  expression: 'last(/Benno MailArchiv by Zabbix agent/vfs.fs.inode[{$BENNO_MOUNTPOINT},pfree])<{$BENNO_INODE_PFREE_CRIT}'
+              tags:
+                - tag: component
+                  value: storage
+                - tag: scope
+                  value: capacity
+        - uuid: 9bd31296783348f78589e8c7dafbd08e
+          name: 'Disk: free percent (mountpoint)'
+          key: 'vfs.fs.size[{$BENNO_MOUNTPOINT},pfree]'
+          delay: 5m
+          history: 90d
+          value_type: FLOAT
+          units: '%'
+          description: 'Percentage of free disk space on {$BENNO_MOUNTPOINT}.'
+          tags:
+            - tag: component
+              value: storage
+          triggers:
+            - uuid: 18279b1507c34b13a936ff77fd8f16c1
+              expression: 'last(/Benno MailArchiv by Zabbix agent/vfs.fs.size[{$BENNO_MOUNTPOINT},pfree])<{$BENNO_DISK_PFREE_CRIT}'
+              name: 'Benno: disk free is critical (<{$BENNO_DISK_PFREE_CRIT}%)'
+              priority: DISASTER
+              description: 'Disk space on {$BENNO_MOUNTPOINT} is below {$BENNO_DISK_PFREE_CRIT}%. Immediate action required.'
+              tags:
+                - tag: component
+                  value: storage
+                - tag: scope
+                  value: capacity
+            - uuid: f883155028bf4f5e8512004b6cb0802b
+              expression: 'last(/Benno MailArchiv by Zabbix agent/vfs.fs.size[{$BENNO_MOUNTPOINT},pfree])<{$BENNO_DISK_PFREE_WARN}'
+              name: 'Benno: disk free is low (<{$BENNO_DISK_PFREE_WARN}%)'
+              priority: WARNING
+              description: 'Disk space on {$BENNO_MOUNTPOINT} is below {$BENNO_DISK_PFREE_WARN}%.'
+              dependencies:
+                - name: 'Benno: disk free is critical (<{$BENNO_DISK_PFREE_CRIT}%)'
+                  expression: 'last(/Benno MailArchiv by Zabbix agent/vfs.fs.size[{$BENNO_MOUNTPOINT},pfree])<{$BENNO_DISK_PFREE_CRIT}'
+              tags:
+                - tag: component
+                  value: storage
+                - tag: scope
+                  value: capacity
+      macros:
+        - macro: '{$BENNO_ARCHIVE_CACHE_MAX_AGE}'
+          value: '21600'
+          description: 'Seconds between archive scans (collector default 6h). Informational on the Zabbix side; the UserParameter ignores its arguments.'
+        - macro: '{$BENNO_ARCHIVE_TS_MAX}'
+          value: '28800'
+          description: 'Alert if the archive totals have not refreshed within this many seconds (must exceed the collector scan interval; default 8h).'
+        - macro: '{$BENNO_ARCHIVE_DIR}'
+          value: /srv/benno/archive
+          description: 'Root directory of the Benno mail archive'
+        - macro: '{$BENNO_BACKUP_MAX_AGE}'
+          value: '93600'
+          description: 'Alert if no successful backup touched BENNO_BACKUP_STAMP within this many seconds (default 26h, daily backup + slack). Silent unless BENNO_BACKUP_STAMP is set on the host.'
+        - macro: '{$BENNO_DISK_PFREE_CRIT}'
+          value: '5'
+          description: 'Disk free % critical threshold'
+        - macro: '{$BENNO_DISK_PFREE_WARN}'
+          value: '15'
+          description: 'Disk free % warning threshold'
+        - macro: '{$BENNO_INBOX}'
+          value: /srv/benno/inbox
+          description: 'Path to the Benno IMAP inbox/pickup directory'
+        - macro: '{$BENNO_INBOX_QUEUE_CRIT}'
+          value: '500'
+          description: 'Inbox queue file count critical threshold'
+        - macro: '{$BENNO_INBOX_QUEUE_WARN}'
+          value: '100'
+          description: 'Inbox queue file count warning threshold'
+        - macro: '{$BENNO_INODE_PFREE_CRIT}'
+          value: '3'
+          description: 'Inode free % critical threshold'
+        - macro: '{$BENNO_INODE_PFREE_WARN}'
+          value: '10'
+          description: 'Inode free % warning threshold'
+        - macro: '{$BENNO_LAST_OK_MAX}'
+          value: '60'
+          description: 'Max minutes since last successful IMAP pickup before alerting'
+        - macro: '{$BENNO_IMPORT_ERR_WARN}'
+          value: '0'
+          description: 'Alert when the import log shows more than this many ERROR/FATAL/SEVERE lines in the last 20 min (0 = any error alerts). The log path lives in the collector (BENNO_IMPORT_LOG), not here.'
+        - macro: '{$BENNO_MOUNTPOINT}'
+          value: /
+          description: 'Mountpoint to monitor for disk space and inodes'
+        - macro: '{$BENNO_CERT_WARN_DAYS}'
+          value: '10'
+          description: 'Alert when the web TLS certificate has fewer than this many days until expiry.'
+        - macro: '{$BENNO_LICENSE_WARN_DAYS}'
+          value: '30'
+          description: 'Alert when the Benno license has fewer than this many days until expiry (renewal lead time).'
+        - macro: '{$BENNO_POP3_HOST}'
+          value: mail.example.com
+          description: 'Host of the POP3/IMAP source the Benno host fetches from (reachability check). The default mail.example.com is a PLACEHOLDER: while it is left unchanged the reachability trigger stays silent, so linking the template does not raise a false alarm. Set this to the real server to activate the check. Reachability only, no credentials.'
+        - macro: '{$BENNO_POP3_PORT}'
+          value: '995'
+          description: 'TCP port of the POP3/IMAP source (default 995 = POP3S; 143 = IMAP, 993 = IMAPS, 110 = POP3).'
+        - macro: '{$BENNO_INBOX_STUCK_WARN}'
+          value: '0'
+          description: 'Alert when more than this many aged .err/.prc files sit in the inbox (0 = any stuck file alerts). The age window is set in the collector (BENNO_INBOX_STUCK_HOURS, default 2h).'
+        - macro: '{$BENNO_IMAPIMPORT_MAXAGE}'
+          value: '1800'
+          description: 'Alert when the benno-imapimport (IMAP/Kerio) wrapper has not run for this many seconds (only where the wrapper log exists).'
+        - macro: '{$BENNO_POSTFIX_QUEUE_WARN}'
+          value: '50'
+          description: 'Alert when the Postfix mail queue exceeds this many messages.'
+        - macro: '{$BENNO_SYSTEMD_FAILED_WARN}'
+          value: '0'
+          description: 'Alert when more than this many systemd units are in failed state (0 = any failed unit alerts).'
+        - macro: '{$BENNO_WEB_REGEX}'
+          value: (Benno|MailArchive|benno)
+          description: 'Regex to confirm the Benno UI responds. Keep it specific so a foreign login page is not counted as success.'
+        - macro: '{$BENNO_WEB_TIMEOUT}'
+          value: 10s
+          description: 'HTTP timeout for the Benno web UI check'
+        - macro: '{$BENNO_WEB_URL}'
+          value: 'http://localhost/benno/'
+          description: 'URL of the Benno web interface for health check. Adjust per host!'
+      dashboards:
+        - uuid: 0302250625c84d9e90107dfbd0d551e7
+          name: 'Benno MailArchiv'
+          pages:
+            - name: Overview
+              widgets:
+                - type: item
+                  name: 'License days left'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        LICENSE
+                        DAYS
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: benno.license_days
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: FFC859
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '14'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '30'
+                - type: item
+                  name: 'NTP synced'
+                  'y': '3'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        NTP
+                        SYNCED
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: benno.ntp_synced
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                - type: item
+                  name: 'Daemon: benno-archive'
+                  'y': '6'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: STRING
+                      name: description
+                      value: |
+                        DAEMON
+                        archive
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: 'systemd.unit.info[benno-archive.service,ActiveState]'
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                - type: svggraph
+                  name: 'Archive size (GiB)'
+                  'y': '9'
+                  width: '36'
+                  height: '6'
+                  fields:
+                    - type: STRING
+                      name: ds.0.color
+                      value: 4796EC
+                    - type: STRING
+                      name: ds.0.data_set_label
+                      value: 'Total size'
+                    - type: INTEGER
+                      name: ds.0.fill
+                      value: '3'
+                    - type: STRING
+                      name: ds.0.items.0
+                      value: 'Archive: total size (GiB)'
+                    - type: INTEGER
+                      name: ds.0.transparency
+                      value: '3'
+                    - type: INTEGER
+                      name: ds.0.width
+                      value: '2'
+                - type: svggraph
+                  name: 'Queues (inbox / postfix)'
+                  'y': '15'
+                  width: '36'
+                  height: '6'
+                  fields:
+                    - type: STRING
+                      name: ds.0.color
+                      value: 4796EC
+                    - type: STRING
+                      name: ds.0.data_set_label
+                      value: 'Inbox files'
+                    - type: INTEGER
+                      name: ds.0.fill
+                      value: '3'
+                    - type: STRING
+                      name: ds.0.items.0
+                      value: 'Benno inbox: queue depth (files)'
+                    - type: INTEGER
+                      name: ds.0.transparency
+                      value: '3'
+                    - type: INTEGER
+                      name: ds.0.width
+                      value: '2'
+                    - type: STRING
+                      name: ds.1.color
+                      value: F2B94A
+                    - type: STRING
+                      name: ds.1.data_set_label
+                      value: 'Postfix queue'
+                    - type: INTEGER
+                      name: ds.1.fill
+                      value: '3'
+                    - type: STRING
+                      name: ds.1.items.0
+                      value: 'Benno: Postfix mail queue depth'
+                    - type: INTEGER
+                      name: ds.1.transparency
+                      value: '3'
+                    - type: INTEGER
+                      name: ds.1.width
+                      value: '2'
+                - type: item
+                  name: 'TLS cert days left'
+                  x: '12'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        TLS CERT
+                        DAYS
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: benno.web.cert_days
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: FFC859
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '10'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '21'
+                - type: item
+                  name: 'Collector journal'
+                  x: '12'
+                  'y': '3'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        COLLECTOR
+                        JOURNAL
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: benno.journal_ok
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                - type: item
+                  name: 'Daemon: benno-rest'
+                  x: '12'
+                  'y': '6'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: STRING
+                      name: description
+                      value: |
+                        DAEMON
+                        rest
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: 'systemd.unit.info[benno-rest.service,ActiveState]'
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                - type: item
+                  name: 'Mail pickup age (min)'
+                  x: '24'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        PICKUP
+                        AGE min
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: benno.imap.last_ok_age
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: FFC859
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '45'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '60'
+                - type: item
+                  name: 'Collector measurement'
+                  x: '24'
+                  'y': '3'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        COLLECTOR
+                        MEASURE
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: benno.collector_ok
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                - type: item
+                  name: 'Daemon: benno-import-rest'
+                  x: '24'
+                  'y': '6'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: STRING
+                      name: description
+                      value: |
+                        DAEMON
+                        import-rest
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: 'systemd.unit.info[benno-import-rest.service,ActiveState]'
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                - type: item
+                  name: 'Postfix queue'
+                  x: '36'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        POSTFIX
+                        QUEUE
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: benno.postfix_queue
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: FFC859
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '50'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '200'
+                - type: item
+                  name: 'Web content OK'
+                  x: '36'
+                  'y': '3'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        WEB
+                        CONTENT
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: benno.web.content_ok
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                - type: item
+                  name: 'Inode free %'
+                  x: '36'
+                  'y': '6'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        INODE
+                        FREE %
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: 'vfs.fs.inode[{$BENNO_MOUNTPOINT},pfree]'
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: FFC859
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '10'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '20'
+                - type: svggraph
+                  name: 'Archive growth per interval'
+                  x: '36'
+                  'y': '9'
+                  width: '36'
+                  height: '6'
+                  fields:
+                    - type: STRING
+                      name: ds.0.color
+                      value: 4796EC
+                    - type: STRING
+                      name: ds.0.data_set_label
+                      value: GiB/interval
+                    - type: INTEGER
+                      name: ds.0.fill
+                      value: '3'
+                    - type: STRING
+                      name: ds.0.items.0
+                      value: 'Archive: growth rate (GiB/interval)'
+                    - type: INTEGER
+                      name: ds.0.transparency
+                      value: '3'
+                    - type: INTEGER
+                      name: ds.0.width
+                      value: '2'
+                    - type: STRING
+                      name: ds.1.color
+                      value: F2B94A
+                    - type: STRING
+                      name: ds.1.data_set_label
+                      value: mails/interval
+                    - type: INTEGER
+                      name: ds.1.fill
+                      value: '3'
+                    - type: STRING
+                      name: ds.1.items.0
+                      value: 'Archive: growth rate (mails/interval)'
+                    - type: INTEGER
+                      name: ds.1.transparency
+                      value: '3'
+                    - type: INTEGER
+                      name: ds.1.width
+                      value: '2'
+                - type: svggraph
+                  name: 'Free space on mountpoint (%)'
+                  x: '36'
+                  'y': '15'
+                  width: '36'
+                  height: '6'
+                  fields:
+                    - type: STRING
+                      name: ds.0.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: ds.0.data_set_label
+                      value: 'Disk free %'
+                    - type: INTEGER
+                      name: ds.0.fill
+                      value: '3'
+                    - type: STRING
+                      name: ds.0.items.0
+                      value: 'Disk: free percent (mountpoint)'
+                    - type: INTEGER
+                      name: ds.0.transparency
+                      value: '3'
+                    - type: INTEGER
+                      name: ds.0.width
+                      value: '2'
+                    - type: STRING
+                      name: ds.1.color
+                      value: 4796EC
+                    - type: STRING
+                      name: ds.1.data_set_label
+                      value: 'Inode free %'
+                    - type: INTEGER
+                      name: ds.1.fill
+                      value: '3'
+                    - type: STRING
+                      name: ds.1.items.0
+                      value: 'Inodes: free percent (mountpoint)'
+                    - type: INTEGER
+                      name: ds.1.transparency
+                      value: '3'
+                    - type: INTEGER
+                      name: ds.1.width
+                      value: '2'
+                - type: item
+                  name: 'systemd failed units'
+                  x: '48'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        SYSTEMD
+                        FAILED
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: benno.systemd_failed
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                - type: item
+                  name: 'IMAP import last run'
+                  x: '48'
+                  'y': '3'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        IMAP IMPORT
+                        1ok/0err
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: benno.imapimport.last
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                - type: item
+                  name: 'POP3 source reachable'
+                  x: '48'
+                  'y': '6'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        POP3
+                        REACH
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: 'net.tcp.service[tcp,{$BENNO_POP3_HOST},{$BENNO_POP3_PORT}]'
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '1'
+                - type: item
+                  name: 'Inbox queue'
+                  x: '60'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        INBOX
+                        QUEUE
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: benno.inbox_queue
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: FFC859
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '100'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '500'
+                - type: item
+                  name: 'Disk free %'
+                  x: '60'
+                  'y': '3'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: INTEGER
+                      name: decimal_places
+                      value: '0'
+                    - type: STRING
+                      name: description
+                      value: |
+                        DISK
+                        FREE %
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: 'vfs.fs.size[{$BENNO_MOUNTPOINT},pfree]'
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+                    - type: STRING
+                      name: thresholds.0.color
+                      value: E45959
+                    - type: STRING
+                      name: thresholds.0.threshold
+                      value: '0'
+                    - type: STRING
+                      name: thresholds.1.color
+                      value: FFC859
+                    - type: STRING
+                      name: thresholds.1.threshold
+                      value: '15'
+                    - type: STRING
+                      name: thresholds.2.color
+                      value: 59DB8F
+                    - type: STRING
+                      name: thresholds.2.threshold
+                      value: '30'
+                - type: item
+                  name: 'IMAP import age (s)'
+                  x: '60'
+                  'y': '6'
+                  width: '12'
+                  height: '3'
+                  fields:
+                    - type: STRING
+                      name: description
+                      value: |
+                        IMAP IMPORT
+                        AGE s
+                    - type: INTEGER
+                      name: desc_bold
+                      value: '1'
+                    - type: INTEGER
+                      name: desc_size
+                      value: '10'
+                    - type: ITEM
+                      name: itemid.0
+                      value:
+                        host: 'Benno MailArchiv by Zabbix agent'
+                        key: benno.imapimport.age
+                    - type: INTEGER
+                      name: show.0
+                      value: '1'
+                    - type: INTEGER
+                      name: show.1
+                      value: '2'
+      valuemaps:
+        - uuid: 58acf319d6ac450c977da862ba642cff
+          name: 'Benno Web Content Check'
+          mappings:
+            - value: '0'
+              newvalue: FAIL
+            - value: '1'
+              newvalue: OK
+  graphs:
+    - uuid: d64ce63027a04eb5a6aec18b4d7f7340
+      name: 'Benno: Archive size and mail count'
+      graph_items:
+        - color: 1A7C11
+          item:
+            host: Benno MailArchiv by Zabbix agent
+            key: benno.archive.total_files
+        - color: 2774A4
+          yaxisside: RIGHT
+          item:
+            host: Benno MailArchiv by Zabbix agent
+            key: benno.archive.total_bytes
+    - uuid: 11b1647ab9904d0baa7aec5cd62225c9
+      name: 'Benno: Disk and inode free %'
+      graph_items:
+        - color: DD0000
+          item:
+            host: Benno MailArchiv by Zabbix agent
+            key: 'vfs.fs.size[{$BENNO_MOUNTPOINT},pfree]'
+        - color: EE9600
+          item:
+            host: Benno MailArchiv by Zabbix agent
+            key: 'vfs.fs.inode[{$BENNO_MOUNTPOINT},pfree]'
+    - uuid: 548c735af6cc4abfbe3f1ebc4fc861de
+      name: 'Benno: IMAP pickup freshness'
+      graph_items:
+        - color: F63100
+          item:
+            host: Benno MailArchiv by Zabbix agent
+            key: benno.imap.last_ok_age
+    - uuid: ce6ebf5d8ddb45c5911cc7b5d0b1a426
+      name: 'Benno: Inbox queue depth'
+      graph_items:
+        - color: 9C27B0
+          item:
+            host: Benno MailArchiv by Zabbix agent
+            key: benno.inbox_queue
